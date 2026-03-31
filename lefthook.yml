@@ -1,0 +1,15 @@
+commit-msg:
+  commands:
+    commitlint:
+      run: npx commitlint --edit {1}
+
+pre-commit:
+  parallel: true
+  commands:
+    typecheck:
+      run: pnpm check-types
+    lint:
+      run: pnpm lint
+    format:
+      glob: "**/*.{ts,tsx,js,jsx,mjs,cjs,json,md,css}"
+      run: pnpm prettier --write {staged_files} && git add {staged_files}
