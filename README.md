@@ -1,159 +1,148 @@
-# Turborepo starter
+# 🧭 Eternal Pose
 
-This Turborepo starter is maintained by the Turborepo core team.
+> A self-hosted One Piece manga reader. Always pointing to the next chapter.
 
-## Using this example
+Eternal Pose scrapes chapter data from 1piecemanga.com, stores page images in Postgres, and serves them through a Hono REST API to a Next.js reader frontend — built as a Turborepo monorepo with Drizzle ORM.
 
-Run the following command:
+---
 
-```sh
-npx create-turbo@latest
+## Stack
+
+| Layer    | Tech                                                                         |
+| -------- | ---------------------------------------------------------------------------- |
+| Monorepo | [Turborepo](https://turbo.build)                                             |
+| Frontend | [Next.js](https://nextjs.org)                                                |
+| API      | [Hono](https://hono.dev)                                                     |
+| Database | [Postgres](https://postgresql.org) + [Drizzle ORM](https://orm.drizzle.team) |
+| Scraper  | Node.js + Cheerio + Axios                                                    |
+
+---
+
+## Project Structure
+
+```
+eternal-pose/
+├── apps/
+│   ├── scraper/        # Scrapes chapter + page image URLs
+│   ├── api/            # Hono REST API
+│   └── web/            # Next.js reader UI
+└── packages/
+    └── db/             # Drizzle schema + shared DB client
 ```
 
-## What's inside?
+---
 
-This Turborepo includes the following packages/apps:
+## Getting Started
 
-### Apps and Packages
+### Prerequisites
 
-- `docs`: a [Next.js](https://nextjs.org/) app
-- `web`: another [Next.js](https://nextjs.org/) app
-- `@repo/ui`: a stub React component library shared by both `web` and `docs` applications
-- `@repo/eslint-config`: `eslint` configurations (includes `eslint-config-next` and `eslint-config-prettier`)
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
+- Node.js 20+
+- pnpm 9+ — `npm i -g pnpm`
+- A Postgres instance ([Supabase](https://supabase.com) free tier works great)
 
-Each package/app is 100% [TypeScript](https://www.typescriptlang.org/).
+### Setup
 
-### Utilities
+```bash
+# 1. Install dependencies
+pnpm install
 
-This Turborepo has some additional tools already setup for you:
+# 2. Copy env and fill in your DATABASE_URL
+cp .env.example .env
 
-- [TypeScript](https://www.typescriptlang.org/) for static type checking
-- [ESLint](https://eslint.org/) for code linting
-- [Prettier](https://prettier.io) for code formatting
+# 3. Push schema to Postgres
+pnpm db:push
 
-### Build
+# 4. Test the scraper (dry run — no DB writes)
+pnpm --filter @onepiece/scraper scrape -- --chapters 5 --dry-run
 
-To build all apps and packages, run the following command:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
-
-```sh
-cd my-turborepo
-turbo build
+# 5. Scrape for real
+pnpm --filter @onepiece/scraper scrape
 ```
 
-Without global `turbo`, use your package manager:
+---
 
-```sh
-cd my-turborepo
-npx turbo build
-yarn dlx turbo build
-pnpm exec turbo build
+## Scraper
+
+```bash
+# Scrape all chapters
+pnpm scrape
+
+# Scrape a specific range
+pnpm --filter @onepiece/scraper scrape -- --start 1 --end 100
+
+# Dry run (no DB writes)
+pnpm --filter @onepiece/scraper scrape -- --dry-run
+
+# Adjust concurrency (default: 2)
+pnpm --filter @onepiece/scraper scrape -- --concurrency 3
 ```
 
-You can build a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
+The scraper is **idempotent** — safe to re-run anytime to pick up new chapters without duplicating data. It cross-references MangaDex to verify each chapter exists before saving.
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
+---
 
-```sh
-turbo build --filter=docs
+## API
+
+```bash
+pnpm --filter @onepiece/api dev
+# Running on http://localhost:4000
 ```
 
-Without global `turbo`:
+### Endpoints
 
-```sh
-npx turbo build --filter=docs
-yarn exec turbo build --filter=docs
-pnpm exec turbo build --filter=docs
-```
+| Method | Path                            | Description                      |
+| ------ | ------------------------------- | -------------------------------- |
+| GET    | `/health`                       | Health check                     |
+| GET    | `/api/chapters`                 | List all chapters (paginated)    |
+| GET    | `/api/chapters?page=2&limit=50` | Paginated                        |
+| GET    | `/api/chapters?order=desc`      | Latest first                     |
+| GET    | `/api/chapters?search=arlong`   | Search by name                   |
+| GET    | `/api/chapters/:number`         | Single chapter metadata          |
+| GET    | `/api/chapters/:number/pages`   | All page image URLs (for reader) |
+| GET    | `/api/chapters/meta/latest`     | Latest chapter available         |
 
-### Develop
+---
 
-To develop all apps and packages, run the following command:
+## Database Schema
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
+### `chapters`
 
-```sh
-cd my-turborepo
-turbo dev
-```
+| Column            | Type        | Notes                          |
+| ----------------- | ----------- | ------------------------------ |
+| id                | serial PK   |                                |
+| chapter_number    | varchar     | `"1"`, `"1101.5"`              |
+| name              | text        | Chapter title                  |
+| slug              | text        | URL slug from source           |
+| source_url        | text        | Scraped from                   |
+| cover_image       | text        | First page URL                 |
+| cover_images      | jsonb       | First 1–3 page URLs            |
+| page_count        | int         | Total pages scraped            |
+| mangadex_verified | bool        | Cross-referenced with MangaDex |
+| published_at      | timestamptz |                                |
 
-Without global `turbo`, use your package manager:
+### `pages`
 
-```sh
-cd my-turborepo
-npx turbo dev
-yarn exec turbo dev
-pnpm exec turbo dev
-```
+| Column      | Type      | Notes          |
+| ----------- | --------- | -------------- |
+| id          | serial PK |                |
+| chapter_id  | int FK    | Cascade delete |
+| page_number | int       | 1-based        |
+| image_url   | text      | CDN image URL  |
+| alt_text    | text      |                |
 
-You can develop a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
+---
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
+## Roadmap
 
-```sh
-turbo dev --filter=web
-```
+- [x] Scraper — chapter list + page images
+- [x] Hono API
+- [x] Drizzle schema
+- [ ] Next.js reader UI
+- [ ] Auto-scrape new chapters (cron)
+- [ ] Image proxy (avoid CDN CORS issues)
 
-Without global `turbo`:
+---
 
-```sh
-npx turbo dev --filter=web
-yarn exec turbo dev --filter=web
-pnpm exec turbo dev --filter=web
-```
+## Disclaimer
 
-### Remote Caching
-
-> [!TIP]
-> Vercel Remote Cache is free for all plans. Get started today at [vercel.com](https://vercel.com/signup?utm_source=remote-cache-sdk&utm_campaign=free_remote_cache).
-
-Turborepo can use a technique known as [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching) to share cache artifacts across machines, enabling you to share build caches with your team and CI/CD pipelines.
-
-By default, Turborepo will cache locally. To enable Remote Caching you will need an account with Vercel. If you don't have an account you can [create one](https://vercel.com/signup?utm_source=turborepo-examples), then enter the following commands:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
-
-```sh
-cd my-turborepo
-turbo login
-```
-
-Without global `turbo`, use your package manager:
-
-```sh
-cd my-turborepo
-npx turbo login
-yarn exec turbo login
-pnpm exec turbo login
-```
-
-This will authenticate the Turborepo CLI with your [Vercel account](https://vercel.com/docs/concepts/personal-accounts/overview).
-
-Next, you can link your Turborepo to your Remote Cache by running the following command from the root of your Turborepo:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
-
-```sh
-turbo link
-```
-
-Without global `turbo`:
-
-```sh
-npx turbo link
-yarn exec turbo link
-pnpm exec turbo link
-```
-
-## Useful Links
-
-Learn more about the power of Turborepo:
-
-- [Tasks](https://turborepo.dev/docs/crafting-your-repository/running-tasks)
-- [Caching](https://turborepo.dev/docs/crafting-your-repository/caching)
-- [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching)
-- [Filtering](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters)
-- [Configuration Options](https://turborepo.dev/docs/reference/configuration)
-- [CLI Usage](https://turborepo.dev/docs/reference/command-line-reference)
+This project is for personal, non-commercial use. One Piece is created by Eiichiro Oda and published by Shueisha. Please support the official release.
